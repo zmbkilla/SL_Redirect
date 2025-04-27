@@ -4,22 +4,23 @@
 #include <ws2tcpip.h>
 #include <detours.h>
 #include <iostream>
-#include <string>
 #include <fstream>
-#include <nlohmann/json.hpp>  // Include the nlohmann json header
+#include <vector>
+#include <string>
+#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
-// Data structure to hold the IP redirections
+// Structure for hostname redirection
 struct Redirection
 {
-    std::string original_ip;
-    std::string target_ip;
+    std::string original_hostname;  // Hostname we expect
+    std::string target_ip;           // IP to redirect to
 };
 
-std::vector<Redirection> ipRedirections;
+std::vector<Redirection> hostnameRedirections;
 
-// Function to load redirections from a JSON file
+// Load JSON redirection file
 void LoadRedirectionsFromJson(const std::string& filename)
 {
     std::ifstream file(filename);
@@ -32,33 +33,42 @@ void LoadRedirectionsFromJson(const std::string& filename)
     json j;
     file >> j;
 
-    // Parse the JSON and populate the redirection vector
-    for (auto& item : j)
+    hostnameRedirections.clear();
+    for (const auto& item : j)
     {
         Redirection redir;
-        redir.original_ip = item["original_ip"];
+        redir.original_hostname = item["original_hostname"];
         redir.target_ip = item["target_ip"];
-        ipRedirections.push_back(redir);
+        hostnameRedirections.push_back(redir);
     }
 
-    std::cout << "Loaded " << ipRedirections.size() << " redirection(s)" << std::endl;
+    std::cout << "Loaded " << hostnameRedirections.size() << " redirection(s)" << std::endl;
 }
 
-// Originals
+// Find redirect IP based on hostname
+bool GetRedirectIP(const std::string& hostname, std::string& out_ip)
+{
+    for (const auto& redir : hostnameRedirections)
+    {
+        if (_stricmp(hostname.c_str(), redir.original_hostname.c_str()) == 0)
+        {
+            out_ip = redir.target_ip;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Original function pointer
 typedef int (WINAPI* GetaddrinfoFn)(
     const char* nodename,
     const char* servname,
     const struct addrinfo* hints,
     struct addrinfo** res);
-typedef int (WINAPI* ConnectFn)(
-    SOCKET s,
-    const struct sockaddr* name,
-    int namelen);
 
 static GetaddrinfoFn orig_getaddrinfo = nullptr;
-static ConnectFn      orig_connect = nullptr;
 
-// Hooked getaddrinfo: swap only the hostname, keep servname (port) intact
+// Hooked getaddrinfo
 int WINAPI getaddrinfo_hook(
     const char* nodename,
     const char* servname,
@@ -67,84 +77,45 @@ int WINAPI getaddrinfo_hook(
 {
     if (nodename)
     {
-        for (const auto& redir : ipRedirections)
+        std::string redirect_ip;
+        if (GetRedirectIP(nodename, redirect_ip))
         {
-            if (_stricmp(nodename, redir.original_ip.c_str()) == 0)
-            {
-                std::cout << "[Redirect] " << nodename << ":" << servname
-                    << " → " << redir.target_ip << ":" << servname << std::endl;
-                return orig_getaddrinfo(redir.target_ip.c_str(), servname, hints, res);
-            }
+            std::cout << "[Redirect Hostname] " << nodename << " → " << redirect_ip << std::endl;
+            // Instead of nodename, pass the redirected IP address
+            return orig_getaddrinfo(redirect_ip.c_str(), servname, hints, res);
         }
     }
+
+    // No redirection, call original
     return orig_getaddrinfo(nodename, servname, hints, res);
 }
 
-// Hooked connect: swap only the IP, preserve original port
-int WINAPI connect_hook(
-    SOCKET s,
-    const struct sockaddr* name,
-    int namelen)
-{
-    if (name && name->sa_family == AF_INET)
-    {
-        auto addr_in = (sockaddr_in const*)name;
-        char ipstr[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &addr_in->sin_addr, ipstr, sizeof(ipstr));
-        int origPort = ntohs(addr_in->sin_port);
-
-        // If the IP matches one in the redirection list, perform the redirect
-        for (const auto& redir : ipRedirections)
-        {
-            if (_stricmp(ipstr, redir.original_ip.c_str()) == 0)
-            {
-                std::cout << "[RedirectConnect] " << ipstr << ":" << origPort
-                    << " → " << redir.target_ip << ":" << origPort << std::endl;
-
-                sockaddr_in redirectAddr = {};
-                redirectAddr.sin_family = AF_INET;
-                redirectAddr.sin_port = htons(origPort);
-                inet_pton(AF_INET, redir.target_ip.c_str(), &redirectAddr.sin_addr);
-
-                return orig_connect(s, (sockaddr*)&redirectAddr, sizeof(redirectAddr));
-            }
-        }
-    }
-    return orig_connect(s, name, namelen);
-}
-
-BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID)
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
+        // Load redirection table
+        LoadRedirectionsFromJson("redirects.json");
 
-        LoadRedirectionsFromJson("redirects.json");  // Load the JSON file
-
+        // Load original function
         HMODULE ws2 = GetModuleHandleA("Ws2_32.dll");
-        orig_getaddrinfo = (GetaddrinfoFn)
-            GetProcAddress(ws2, "getaddrinfo");
-        orig_connect = (ConnectFn)
-            GetProcAddress(ws2, "connect");
+        orig_getaddrinfo = (GetaddrinfoFn)GetProcAddress(ws2, "getaddrinfo");
 
+        // Hook using Detours
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         DetourAttach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
-        DetourAttach((PVOID*)&orig_connect, connect_hook);
         DetourTransactionCommit();
 
-        std::cout << "Hooks installed\n";
+        std::cout << "Hostname hook installed!" << std::endl;
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
+        // Remove hook
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         DetourDetach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
-        DetourDetach((PVOID*)&orig_connect, connect_hook);
         DetourTransactionCommit();
-
-        WSACleanup();
     }
     return TRUE;
 }
