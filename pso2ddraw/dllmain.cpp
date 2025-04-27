@@ -9,7 +9,7 @@
 #include <nlohmann/json.hpp>  // Include the nlohmann json header
 
 using json = nlohmann::json;
-//yes
+
 // Data structure to hold the IP redirections
 struct Redirection
 {
@@ -117,11 +117,6 @@ BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
-        MessageBoxA(nullptr,
-            "Hook DLL loaded! Enjoy Playing Starlight",
-            "Info",
-            MB_OK | MB_ICONINFORMATION);
-
         WSADATA wsa;
         WSAStartup(MAKEWORD(2, 2), &wsa);
 
