@@ -182,6 +182,8 @@ int WINAPI getaddrinfo_hook(
     Log((std::string("[getaddrinfo called] nodename=") + (nodename ? nodename : "<null>")).c_str());
 
     // Step 0: Bypass if nodename is already the redirect IP
+
+
     if (nodename && strcmp(nodename, fallback_ip) == 0) {
         Log((std::string("[Bypass Redirect] Already IP: ") + nodename).c_str());
         return orig_getaddrinfo(nodename, servname, hints, res);
@@ -364,7 +366,34 @@ BOOL WINAPI CreateProcessW_Hook(
         lpProcessInformation);
 }
 
-//trying to
+//trying to hook lua
+typedef void(__cdecl* LuaLoaderFn)(
+    void* param_1,
+    void* param_2,
+    const char* luaName
+    );
+static LuaLoaderFn orig_LuaLoader = nullptr;
+
+void __cdecl LuaLoader_Hook(
+    void* param_1,
+    void* param_2,
+    const char* luaName)
+{
+    if (luaName)
+    {
+        std::string msg = "[Lua Load] ";
+        msg += luaName;
+        Log(msg.c_str());
+    }
+    else
+    {
+        Log("[Lua Load] <null>");
+    }
+
+    // Call original
+    orig_LuaLoader(param_1, param_2, luaName);
+}
+
 
 
 
@@ -420,6 +449,13 @@ DWORD WINAPI InitHookThread(LPVOID lpParam)
     HMODULE ws2 = GetModuleHandleA("Ws2_32.dll");
     HMODULE winhttp = GetModuleHandleA("winhttp.dll");
 
+    HMODULE hGame = GetModuleHandle(NULL);
+    uintptr_t base = (uintptr_t)hGame;
+
+    uintptr_t luaOffset = 0x0138EBD0;  // corrected
+    orig_LuaLoader = (LuaLoaderFn)(base + luaOffset);
+
+
     orig_getaddrinfo = (GetaddrinfoFn)GetProcAddress(ws2, "getaddrinfo");
     orig_WinHttpOpenRequest = (WinHttpOpenRequestFn)GetProcAddress(winhttp, "WinHttpOpenRequest");
     orig_CreateProcessW = (CreateProcessW_Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "CreateProcessW");
@@ -428,6 +464,7 @@ DWORD WINAPI InitHookThread(LPVOID lpParam)
 
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
+    DetourAttach((PVOID*)&orig_LuaLoader, LuaLoader_Hook);
     DetourAttach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
     DetourAttach((PVOID*)&orig_CreateProcessW, CreateProcessW_Hook);
     DetourAttach((PVOID*)&orig_WinHttpOpenRequest, WinHttpOpenRequest_Hook);
