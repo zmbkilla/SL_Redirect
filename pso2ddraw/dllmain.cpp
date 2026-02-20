@@ -366,26 +366,8 @@ BOOL WINAPI CreateProcessW_Hook(
         lpProcessInformation);
 }
 
-//trying to hook lua
-// Change __cdecl to __thiscall
-typedef void(__thiscall* t_LuaHeaderCheck)(int L, unsigned int** zio_ptr);
-t_LuaHeaderCheck o_LuaHeaderCheck = nullptr;
 
-// Use __fastcall as a workaround for standalone functions to handle ECX
-void __fastcall h_LuaHeaderCheck(int L, void* edx_unused, unsigned int** zio_ptr) {
-    __try {
-        if (zio_ptr && *zio_ptr) {
-            unsigned int* scriptData = *zio_ptr;
-            // 0x61754c1b is the "\x1bLua" magic header
-            if (scriptData && !IsBadReadPtr(scriptData, 4) && *scriptData == 0x61754c1b) {
-                printf("[+] Lua Script Pointer: %p\n", (void*)scriptData);
-            }
-        }
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {}
 
-    return o_LuaHeaderCheck(L, zio_ptr);
-}
 
 
 
@@ -453,10 +435,6 @@ DWORD WINAPI InitHookThread(LPVOID lpParam)
     HMODULE ws2 = GetModuleHandleA("Ws2_32.dll");
     HMODULE winhttp = GetModuleHandleA("winhttp.dll");
 
-    // Calculate Dynamic Address
-    uintptr_t gameBase = (uintptr_t)GetModuleHandleA(NULL);
-    uintptr_t offset = 0x04F8FBD0; // Your Ghidra Offset
-    o_LuaHeaderCheck = (t_LuaHeaderCheck)(gameBase + offset);
 
 
     orig_getaddrinfo = (GetaddrinfoFn)GetProcAddress(ws2, "getaddrinfo");
@@ -467,7 +445,6 @@ DWORD WINAPI InitHookThread(LPVOID lpParam)
 
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach(&(PVOID&)o_LuaHeaderCheck, h_LuaHeaderCheck);
     DetourAttach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
     DetourAttach((PVOID*)&orig_CreateProcessW, CreateProcessW_Hook);
     DetourAttach((PVOID*)&orig_WinHttpOpenRequest, WinHttpOpenRequest_Hook);
