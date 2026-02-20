@@ -160,60 +160,60 @@ std::string ApplyHttpRedirect(const std::string& fullUrl)
 }
 
 // --- getaddrinfo hook ---
-typedef int (WINAPI* GetaddrinfoFn)(const char* nodename, const char* servname, const struct addrinfo* hints, struct addrinfo** res);
-static GetaddrinfoFn orig_getaddrinfo = nullptr;
-
-int WINAPI getaddrinfo_hook(
-    const char* nodename,
-    const char* servname,
-    const struct addrinfo* hints,
-    struct addrinfo** res)
-{
-
-    
-
-    const char* fallback_ip = "127.0.0.1";
-    fallback_ip = defaultTargetIp.c_str();
-    std::string redirect_ip;
-    const char* use_ip = fallback_ip;
-
-    Log(saveip);
-    Log(fallback_ip);
-    Log((std::string("[getaddrinfo called] nodename=") + (nodename ? nodename : "<null>")).c_str());
-
-    // Step 0: Bypass if nodename is already the redirect IP
-
-
-    if (nodename && strcmp(nodename, fallback_ip) == 0) {
-        Log((std::string("[Bypass Redirect] Already IP: ") + nodename).c_str());
-        return orig_getaddrinfo(nodename, servname, hints, res);
-    }
-
-    if (nodename && GetRedirectIP(nodename, redirect_ip)) {
-        use_ip = redirect_ip.c_str();
-        std::cout << "[Redirect Hostname] " << nodename << " → " << use_ip << std::endl;
-        Log((std::string("[Redirect Hostname] ") + nodename + " -> " + use_ip).c_str());
-    }
-    else {
-        if (!use_ip || !*use_ip)
-            use_ip = nodename;  // temporary forced IP
-        use_ip = fallback_ip;
-
-        //use_ip = redirect_ip.empty() ? fallback_ip : redirect_ip.c_str();
-        
-        Log((std::string("[Fallback Redirect] ") +
-            (nodename ? nodename : "<null>") +
-            " -> " + use_ip).c_str());
-        std::cout << "[Fallback Redirect] " << (nodename ? nodename : "<null>") << " → " << use_ip << std::endl;
-    }
-
-    char* new_host = _strdup(use_ip);
-    saveip = _strdup(fallback_ip);
-    int result = orig_getaddrinfo(new_host, servname, hints, res);
-    //free(new_host);
-    
-    return result;
-}
+//typedef int (WINAPI* GetaddrinfoFn)(const char* nodename, const char* servname, const struct addrinfo* hints, struct addrinfo** res);
+//static GetaddrinfoFn orig_getaddrinfo = nullptr;
+//
+//int WINAPI getaddrinfo_hook(
+//    const char* nodename,
+//    const char* servname,
+//    const struct addrinfo* hints,
+//    struct addrinfo** res)
+//{
+//
+//    
+//
+//    const char* fallback_ip = "127.0.0.1";
+//    fallback_ip = defaultTargetIp.c_str();
+//    std::string redirect_ip;
+//    const char* use_ip = fallback_ip;
+//
+//    Log(saveip);
+//    Log(fallback_ip);
+//    Log((std::string("[getaddrinfo called] nodename=") + (nodename ? nodename : "<null>")).c_str());
+//
+//    // Step 0: Bypass if nodename is already the redirect IP
+//
+//
+//    if (nodename && strcmp(nodename, fallback_ip) == 0) {
+//        Log((std::string("[Bypass Redirect] Already IP: ") + nodename).c_str());
+//        return orig_getaddrinfo(nodename, servname, hints, res);
+//    }
+//
+//    if (nodename && GetRedirectIP(nodename, redirect_ip)) {
+//        use_ip = redirect_ip.c_str();
+//        std::cout << "[Redirect Hostname] " << nodename << " → " << use_ip << std::endl;
+//        Log((std::string("[Redirect Hostname] ") + nodename + " -> " + use_ip).c_str());
+//    }
+//    else {
+//        if (!use_ip || !*use_ip)
+//            use_ip = nodename;  // temporary forced IP
+//        use_ip = fallback_ip;
+//
+//        //use_ip = redirect_ip.empty() ? fallback_ip : redirect_ip.c_str();
+//        
+//        Log((std::string("[Fallback Redirect] ") +
+//            (nodename ? nodename : "<null>") +
+//            " -> " + use_ip).c_str());
+//        std::cout << "[Fallback Redirect] " << (nodename ? nodename : "<null>") << " → " << use_ip << std::endl;
+//    }
+//
+//    char* new_host = _strdup(use_ip);
+//    saveip = _strdup(fallback_ip);
+//    int result = orig_getaddrinfo(new_host, servname, hints, res);
+//    //free(new_host);
+//    
+//    return result;
+//}
 
 
 
@@ -371,6 +371,77 @@ BOOL WINAPI CreateProcessW_Hook(
 
 
 
+typedef BOOL(WINAPI* CryptImportKeyFn)(
+    ULONG_PTR hProv,
+    const BYTE* pbData,
+    DWORD dwDataLen,
+    ULONG_PTR hPubKey,
+    DWORD dwFlags,
+    ULONG_PTR* phKey
+    );
+static CryptImportKeyFn orig_CryptImportKeyFn = nullptr;
+
+
+BOOL WINAPI Hook_CryptImportKey(
+    ULONG_PTR hProv,
+    const BYTE* pbData,
+    DWORD dwDataLen,
+    ULONG_PTR hPubKey,
+    DWORD dwFlags,
+    ULONG_PTR* phKey
+)
+{
+    // Example: inspect parameters
+    if (pbData == nullptr || dwDataLen == 0)
+    {
+        return orig_CryptImportKeyFn(
+            hProv, pbData, dwDataLen, hPubKey, dwFlags, phKey
+        );
+    }
+
+    // ---- your custom logic here ----
+    const BYTE* dataPtr = pbData;
+    DWORD dataLen = dwDataLen;
+
+    // modify dataPtr/dataLen if needed
+
+    std::ifstream file("test.bin", std::ios::binary);
+
+    if (!file)
+    {
+        std::cout << "Failed to open file\n";
+        return 1;
+    }
+
+    // get file size
+    file.seekg(0, std::ios::end);
+    size_t size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    // allocate buffer
+    std::vector<unsigned char> buffer(size);
+
+    // read file into memory
+    file.read(reinterpret_cast<char*>(buffer.data()), size);
+
+    std::cout << "Read " << buffer.size() << " bytes\n";
+
+    // access data
+    unsigned char* fdataPtr = buffer.data();
+    size_t fdataLen = buffer.size();
+
+    memcpy((void*)dataPtr, &fdataLen, fdataLen);
+
+    // call original
+    return orig_CryptImportKeyFn(
+        hProv,
+        dataPtr,
+        dataLen,
+        hPubKey,
+        dwFlags,
+        phKey
+    );
+}
 
 
 
@@ -378,11 +449,7 @@ BOOL WINAPI CreateProcessW_Hook(
 
 
 
-
-
-
-
-
+//end of bs
 // Forward declaration
 DWORD WINAPI InitHookThread(LPVOID lpParam);
 DWORD WINAPI LoaderThread(LPVOID)
@@ -413,9 +480,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
         // Clean unhook
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourDetach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
+        //DetourDetach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
         DetourDetach((PVOID*)&orig_WinHttpOpenRequest, WinHttpOpenRequest_Hook);
         DetourDetach((PVOID*)&orig_CreateProcessW, CreateProcessW_Hook);
+        DetourDetach((PVOID*)&orig_CryptImportKeyFn, Hook_CryptImportKey);
         DetourTransactionCommit();
     }
 
@@ -434,20 +502,23 @@ DWORD WINAPI InitHookThread(LPVOID lpParam)
     }
     HMODULE ws2 = GetModuleHandleA("Ws2_32.dll");
     HMODULE winhttp = GetModuleHandleA("winhttp.dll");
+    HMODULE bcrypt = GetModuleHandleA("bcrypt.dll");
 
 
 
-    orig_getaddrinfo = (GetaddrinfoFn)GetProcAddress(ws2, "getaddrinfo");
+    //orig_getaddrinfo = (GetaddrinfoFn)GetProcAddress(ws2, "getaddrinfo");
     orig_WinHttpOpenRequest = (WinHttpOpenRequestFn)GetProcAddress(winhttp, "WinHttpOpenRequest");
     orig_CreateProcessW = (CreateProcessW_Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "CreateProcessW");
+    orig_CryptImportKeyFn = (CryptImportKeyFn)GetProcAddress(GetModuleHandleA("bcrypt.dll"), "CryptImportKey");
 
-    if (!orig_getaddrinfo || !orig_WinHttpOpenRequest || !orig_CreateProcessW) return 0;
-
+    //if (!orig_getaddrinfo || !orig_WinHttpOpenRequest || !orig_CreateProcessW) return 0;
+    if (!orig_WinHttpOpenRequest || !orig_CreateProcessW) return 0;
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
-    DetourAttach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
+    //DetourAttach((PVOID*)&orig_getaddrinfo, getaddrinfo_hook);
     DetourAttach((PVOID*)&orig_CreateProcessW, CreateProcessW_Hook);
     DetourAttach((PVOID*)&orig_WinHttpOpenRequest, WinHttpOpenRequest_Hook);
+    DetourAttach((PVOID*)&orig_CryptImportKeyFn, Hook_CryptImportKey);
     DetourTransactionCommit();
 
     LoadRedirectionsFromJson("redirects.json");
